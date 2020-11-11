@@ -13,6 +13,7 @@ python3 chat.py <puerto>
 ```
 @sobrenombre <nuevonombre>
 @conecta (<puerto> | <sobrenombre>)
+@contactos
 @desconecta
 @salir
 ```
