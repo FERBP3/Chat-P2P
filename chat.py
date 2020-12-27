@@ -48,28 +48,18 @@ class Chat:
                     if sobrenombre == id_conn:
                         id_conn = port
                         break
-
             self.client_addr[1] = id_conn
 
         # Se conecta con uno o dos cliente dependiendo si funciona como puente (intermediario)
         if puente:
             # Se trata de conectar al cliente de formar persistente
-            connected = False
-            while not connected:
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.connect(('localhost', self.inter_ports[position]))
-                    connected = True
-                except Exception as e:
-                    print("conectando...")
-                    time.sleep(2)
+            while sock.connect_ex(('localhost', self.inter_ports[position])) != 0:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                print("conectando con el cliente...")
+                time.sleep(2)
+
             # Se guarda la nueva conexion
             self.inter_conn[position] = sock
-            if position == 0:
-                print("Se logró conectar con el cliente origen")
-            else:
-                print("Se logró conectar con el cliente destino")
-
         else:
             try:
                 sock.connect(('localhost', self.client_addr[1]))
@@ -82,10 +72,6 @@ class Chat:
         try:
             if puente:
                 self.inter_conn[position].sendall(mensaje.encode())
-                if position == 0:
-                    print("Mandando mensaje al cliente origen")
-                else:
-                    print("Mandando mensaje al cliente destino")
             else:
                 self.client_conn.sendall(mensaje.encode())
         except Exception as e:
@@ -101,32 +87,21 @@ class Chat:
         try:
             new_client, _ = self.socket_servidor.accept()
         except:
-            #print("La conexión del servidor fue cerrada")
             sys.exit(0)
 
         respuesta = new_client.recv(1024).decode("utf-8")
         try:
-            print("Se recibió: {}".format(respuesta))
-            if self.chateando or self.is_bridge:
-                respuesta = respuesta.split(" ")
-                print("Se intentó conectar alguien mientras estabas chateando")
-                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.connect(('localhost', int(respuesta[1])))
-                mensaje = "@occupied"
-                sock.sendall(mensaje.encode())
-                return
-            if respuesta.startswith('@occupied'):
-                print("El cliente está ocupado")
-                threading.Thread(target=self.espera_como_servidor).start()
-                return
-
+            #print("Se recibió: {}".format(respuesta))
             if self.server_conn[0] is None:
                 self.server_conn[0] = new_client
             else:
                 self.server_conn[1] = new_client
 
-            if respuesta.startswith('@puente'):
-                respuesta = respuesta.split(" ")
+            respuesta = respuesta.split(" ", 3)
+            if respuesta[0] == '@inter_accepted':
+                return
+            if respuesta[0] == '@puente':
+                print("Solicitud de servidor recibida")
 
                 self.inter_ports[0] = int(respuesta[2])
                 self.inter_ports[1] = int(respuesta[3])
@@ -137,48 +112,38 @@ class Chat:
                 self.conecta_como_cliente(None, mensaje, True, 1)
                 self.espera_como_servidor()
 
-                print("mandando @accept al origen")
-                mensaje = "@accept_puente {} ".format(self.addr[1])
+                mensaje = "@puente_accepted {} {}".format(self.addr[1], self.inter_sobrenombres[1])
                 self.conecta_como_cliente(None, mensaje, True, 0)
 
+                print("Solicitud de servidor aceptada. Ahora soy un servidor")
                 self.is_bridge = True
                 threading.Thread(target=self.escucha, args=(self.server_conn[0], self.inter_conn[1], self.inter_sobrenombres[0],)).start()
                 threading.Thread(target=self.escucha, args=(self.server_conn[1], self.inter_conn[0], self.inter_sobrenombres[1],)).start()
                 return
 
-            elif respuesta.startswith('@accept_puente'):
-                respuesta = respuesta.split(" ")
-
-                self.client_addr[1] = int(respuesta[1])
-
-            elif respuesta.startswith('@intermediario'):
-                respuesta = respuesta.split(" ")
-
+            else:
                 self.client_addr[1] = int(respuesta[1])
                 self.sobrenombre_vecino = respuesta[2]
-                print(":: Sincronizando en puerto de intermediario {}".format(self.client_addr[1]))
-                mensaje = "@accept_inter"
-                self.conecta_como_cliente(self.client_addr[1], mensaje, False, None)
-            elif respuesta.startswith('@accept_inter'):
-                return
-
-            elif respuesta.startswith('@request') or respuesta.startswith('@accept'):
-                respuesta = respuesta.split(" ", 3)
-
-                self.client_addr[1] = int(respuesta[1])
-                self.sobrenombre_vecino = respuesta[2]
-                self.contactos[self.client_addr[1]] = str(self.sobrenombre_vecino)
-                self.contactos_vecino = json.loads(respuesta[3])
-
-                if self.contactos_vecino.get(str(self.addr[1]), None) is not None:
-                    del self.contactos_vecino[str(self.addr[1])]
-
-                if self.esperando_aceptacion:
-                    print("Conexión aceptada. Ahora están conectados.")
-                elif not self.chateando:
-                    print(":: Sincronizando en puerto {}".format(self.client_addr[1]))
-                    mensaje = "@accept {} {} {}".format(self.addr[1], self.sobrenombre, json.dumps(self.contactos))
+                if respuesta[0] == '@puente_accepted':
+                    pass
+                elif respuesta[0] == '@intermediario':
+                    print(":: Sincronizando en puerto de intermediario {}".format(self.client_addr[1]))
+                    mensaje = "@inter_accepted"
                     self.conecta_como_cliente(self.client_addr[1], mensaje, False, None)
+
+                elif respuesta[0] == '@request' or respuesta[0] == '@accept':
+                    self.contactos[self.client_addr[1]] = self.sobrenombre_vecino
+                    self.contactos_vecino = json.loads(respuesta[3])
+
+                    if self.contactos_vecino.get(str(self.addr[1]), None) is not None:
+                        del self.contactos_vecino[str(self.addr[1])]
+
+                    if self.esperando_aceptacion:
+                        print("Conexión aceptada. Ahora están conectados.")
+                    elif not self.chateando:
+                        print(":: Sincronizando en puerto {}".format(self.client_addr[1]))
+                        mensaje = "@accept {} {} {}".format(self.addr[1], self.sobrenombre, json.dumps(self.contactos))
+                        self.conecta_como_cliente(self.client_addr[1], mensaje, False, None)
         except Exception as e:
             print(e)
             return
@@ -220,43 +185,11 @@ class Chat:
                 if not self.chateando:
                     print(":: No hay ninguna conexion activa")
                     continue
-                self.chateando = False
-                self.esperando_aceptacion = False
-                try:
-                    self.client_conn.sendall(comando.encode())
-                    self.client_conn.close()
-                    self.server_conn[0].close()
-                except Exception as e:
-                    print("error en desconecta", e)
-
-                self.server_conn[0] = None
-                self.server_conn[1] = None
-                self.inter_conn[0] = None
-                self.inter_conn[1] = None
-                self.client_addr[1] = None
-                self.client_conn = None
-                self.sobrenombre_vecino = ""
-                self.contactos_vecino = {}
-
-                print(":: Saliste de la conversación")
-                threading.Thread(target=self.espera_como_servidor).start()
+                message = ":: Saliste de la conversación"
+                self.restart_conections(message)
 
             elif comando.startswith("@salir"):
-                try:
-                    if self.is_bridge:
-                        self.inter_conn[0].sendall("@desconecta".encode())
-                        self.inter_conn[1].sendall("@desconecta".encode())
-
-                    if self.chateando:
-                        self.client_conn.sendall("@desconecta".encode())
-                    if self.client_conn is not None:
-                        self.client_conn.close()
-                        self.server_conn[0].close()
-                    self.socket_servidor.close()
-                except Exception as e:
-                    print("error al salir: ", e)
-                print(":: Hasta la próxima")
-                sys.exit(0)
+                self.close_conections(True)
                 break
 
             elif comando.startswith("@"):
@@ -264,11 +197,49 @@ class Chat:
             else:
                 if not self.chateando:
                     print("No tienes una conversación abierta")
+                elif self.esperando_aceptacion:
+                    print("Espera a que te respondan")
                 else:
-                    try:
                         self.client_conn.sendall(comando.encode())
-                    except Exception as e:
-                        print("error en sendall")
+
+    def close_conections(self, exit):
+        #Primero avisamos a nuestros clientes y luego desconectamos todo
+        try:
+            if self.is_bridge:
+                self.inter_conn[0].sendall("@desconecta".encode())
+                self.inter_conn[1].sendall("@desconecta".encode())
+                self.inter_conn[0].close()
+                self.inter_conn[1].close()
+                self.server_conn[0].close()
+                self.server_conn[1].close()
+
+            else:
+                if self.chateando:
+                    self.client_conn.sendall("@desconecta".encode())
+                    self.client_conn.close()
+                    self.server_conn[0].close()
+                else:
+                    if self.client_conn is not None and self.server_conn[0] is not None:
+                        self.client_conn.close()
+                        self.server_conn[0].close()
+        except Exception as e:
+            print("error en desconecta", e)
+
+        if exit:
+            self.socket_servidor.close()
+            sys.exit(0)
+
+        self.server_conn = [None, None]
+        self.inter_conn = [None, None]
+        self.inter_ports = [None, None]
+        self.inter_sobrenombres = ["",""]
+        self.client_addr[1] = None
+        self.client_conn = None
+        self.sobrenombre_vecino = ""
+        self.contactos_vecino = {}
+        self.is_bridge = False
+        self.chateando = False
+        self.esperando_aceptacion = False
 
     def escucha(self, origin, dest, sobrenombre_origin):
         while True:
@@ -276,59 +247,36 @@ class Chat:
             try:
                 info = origin.recv(64).decode("utf-8")
             except Exception as e:
-                print("Excepcion :escucha_como_servidor ", e)
                 break
 
-            print("Se recibió: ", info)
+            #print("Se recibió: ", info)
             if len(info) == 0:
                 if self.is_bridge:
-                    print("error : no hay datos por leer de uno de los cliente")
+                    print("error : no hay datos por leer de uno de los clientes")
+                    dest.sendall("@desconecta".encode())
+                    message = ":: {} cerró la conversación.".format(self.sobrenombre_vecino)
+                    self.restart_conections(message)
+                    break
+
                 else:
                     print("Hubo un error en la conexión buscando intermediario...")
-                    try:
-                        self.client_conn.close()
-                        self.server_conn[0].close()
-                    except Exception as e:
-                        print("excepcion cerrando conexiones ", e)
-
-                    self.client_conn = None
-                    self.server_conn[0] = None
-
-                    self.chateando = False
-                    self.esperando_aceptacion = True
-
                     bridge_port = self.get_bridge_port()
                     if bridge_port is None:
-                        print("El vecino no tiene contactos para usar como intermediario, cerrando conexiones...")
-                        try:
-                            self.server_conn[0].close()
-                            if self.is_bridge:
-                                self.server_conn[1].close()
-                                self.inter_conn[0].close()
-                                self.inter_conn[1].close()
-                            else:
-                                self.client_conn.close()
-                        except Exception as e:
-                            print("error al cerrar conns en escucha: ", e)
-
-                        print(":: {} cerró la conversación.".format(self.sobrenombre_vecino))
-                        self.server_conn[0] = None
-                        self.server_conn[1] = None
-                        self.inter_conn[0] = None
-                        self.inter_conn[1] = None
-                        self.client_addr[1] = None
-                        self.client_conn = None
-                        self.sobrenombre_vecino = ""
-                        self.chateando = False
-                        self.esperando_aceptacion = False
-                        self.is_bridge = False
-                        self.contactos_vecino = {}
-
-                        threading.Thread(target=self.espera_como_servidor).start()
+                        message = "El vecino no tiene contactos para usar como intermediario, cerrando conexiones..."
+                        self.restart_conections(message)
                         break
 
-                    print("puerto escogido como intermediario: ", bridge_port)
                     mensaje = "@puente {} {} {}".format(self.sobrenombre, self.addr[1], self.client_addr[1])
+                    # Se guardan los atributos que no se tienen que borrar
+                    sobrenombre_vecino = self.sobrenombre_vecino
+                    contactos_vecino = self.contactos_vecino
+                    self.close_conections(False)
+
+                    self.esperando_aceptacion = True
+                    self.sobrenombre_vecino = sobrenombre_vecino
+                    self.contactos_vecino = contactos_vecino
+
+                    print("puerto escogido como intermediario: ", bridge_port)
                     self.conecta_como_cliente(bridge_port, mensaje, False, None)
                     threading.Thread(target=self.espera_como_servidor).start()
                 break
@@ -336,32 +284,8 @@ class Chat:
             if info.startswith("@desconecta"):
                 if self.is_bridge:
                     dest.sendall("@desconecta".encode())
-
-                try:
-                    self.server_conn[0].close()
-                    if self.is_bridge:
-                        self.server_conn[1].close()
-                        self.inter_conn[0].close()
-                        self.inter_conn[1].close()
-                    else:
-                        self.client_conn.close()
-                except Exception as e:
-                    print("error al cerrar conns en escucha: ", e)
-
-                print(":: {} cerró la conversación.".format(self.sobrenombre_vecino))
-                self.server_conn[0] = None
-                self.server_conn[1] = None
-                self.inter_conn[0] = None
-                self.inter_conn[1] = None
-                self.client_addr[1] = None
-                self.client_conn = None
-                self.sobrenombre_vecino = ""
-                self.chateando = False
-                self.esperando_aceptacion = False
-                self.is_bridge = False
-                self.contactos_vecino = {}
-
-                threading.Thread(target=self.espera_como_servidor).start()
+                message = ":: {} cerró la conversación.".format(self.sobrenombre_vecino)
+                self.restart_conections(message)
                 break
 
             print("[{}]{}".format(sobrenombre_origin, info))
@@ -372,6 +296,11 @@ class Chat:
         if len(self.contactos_vecino) == 0:
             return None
         return choice(list(self.contactos_vecino.keys()))
+
+    def restart_conections(self, message):
+        print(message)
+        self.close_conections(False)
+        threading.Thread(target=self.espera_como_servidor).start()
 
     def corre(self):
         threading.Thread(target=self.espera_como_servidor).start()
