@@ -11,7 +11,7 @@ python3 chat.py <puerto>
 ### Comandos aceptados 🔧
 
 ```
-@sobrenombre <nuevonombre>
+@sb <nuevonombre>
 @conecta (<puerto> | <sobrenombre>)
 @contactos
 @desconecta
