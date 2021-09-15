@@ -1,18 +1,14 @@
 # Chat Peer to Peer
 
-## Compilación 🚀
-
-Para compilar el chat basta con el siguiente comando donde <puerto> es el puerto en el que el cliente se va a conectar
-
+## Compilation 🚀
 ```
-python3 chat.py <puerto>
+python3 chat.py <port>
 ```
 
-### Comandos aceptados 🔧
-
+### Accepted commands 🔧
 ```
-@sb <nuevonombre>
-@conecta (<puerto> | <sobrenombre>)
+@sb <newname>
+@conecta (<port> | <nickname>)
 @contactos
 @desconecta
 @salir
